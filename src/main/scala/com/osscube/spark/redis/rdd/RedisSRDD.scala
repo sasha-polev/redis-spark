@@ -4,17 +4,20 @@ import java.net.InetAddress
 import java.util
 import org.apache.spark.{TaskContext, Partition, SparkContext, Logging}
 import org.apache.spark.rdd.RDD
-import redis.clients.jedis.{JedisPool, JedisCluster, HostAndPort, Jedis}
+import redis.clients.jedis._
 import redis.clients.util.JedisClusterCRC16
 import scala.collection.JavaConversions._
 
 
-case class RedisPartition( index: Int,
-                           endpoint: (InetAddress, Int), mod: Int, modMax: Int) extends Partition
 
-class RedisRDD (  //[K,V]
+
+class RedisSRDD (  //[K,V]
                   @transient sc: SparkContext,
-                  @transient val redisHosts: Array[(String,Int, Int, Int)] //last value is number of partitions per host
+                  @transient val redisHosts: Array[(String,Int, Int, Int)], //last value is number of partitions per host
+                  val namespace: Int = 0,
+                  val scanCount: Int = 10000,
+                  val keyPattern: String = "*",
+                  val valuePattern: String= "*"
                  )
   extends RDD[(String, String)](sc, Seq.empty) with Logging {
 
@@ -23,70 +26,59 @@ class RedisRDD (  //[K,V]
     val endpoint = partition.endpoint
     logDebug("RDD: " + split.index + ", Connecting to: " + endpoint)
     val jedis = new Jedis(endpoint._1.getHostAddress,endpoint._2)
-    val keys = jedis.keys("*")
+    //jedis.select(namespace)
+    val keys = getKeys(jedis, keyPattern, scanCount, partition)
     logDebug("Keys found: " + keys.mkString(" "))
-    keys.filter(JedisClusterCRC16.getCRC16(_) % partition.modMax == partition.mod).flatMap(k => if(jedis.`type`(k) == "hash") jedis.hgetAll(k) else Seq()).iterator
+    //System.out.println("RDD: " + split.index + ", Keys count: " + keys.size()+ ", Mod Max: " + partition.modMax + ", Mod: " + partition.mod)
+    keys.flatMap(getVals(jedis, _, keyPattern, scanCount)).iterator
   }
+
+  def getVals(jedis: Jedis, k: String, keyPattern: String, scanCount: Int): Seq[(String, String)]= {
+    val params = new ScanParams().`match`(keyPattern) //.count(scanCount)
+    val vals = new util.HashSet[String]()
+    var scan = jedis.sscan(k,"0",params)
+    vals.addAll(scan.getResult)
+    while(scan.getStringCursor != "0") {
+      scan = jedis.sscan(k, scan.getStringCursor,params)
+      vals.addAll(scan.getResult)
+    }
+    Seq.fill(vals.size){k}.zip(vals)
+  }
+
+
+
+
+  def getKeys(jedis: Jedis, keyPattern: String, scanCount: Int, partition: RedisPartition ) = {
+    val params = new ScanParams().`match`(keyPattern).count(scanCount)
+    //System.out.println("Params k: " + keyPattern + "|" + scanCount)
+    val keys = new util.HashSet[String]()
+    var scan = jedis.scan("0",params)
+    //System.out.println("Keys count total: " + scan.getResult.size() +", Keys scan cursor: " + scan.getStringCursor )
+    val f = scan.getResult.filter(s => (JedisClusterCRC16.getCRC16(s) % (partition.modMax + 1)) == partition.mod)
+    //System.out.println("Keys filtered: " + f.length)
+    keys.addAll(f)
+    while(scan.getStringCursor != "0"){
+      scan = jedis.scan(scan.getStringCursor, params)
+      val f1  = scan.getResult.filter(s => (JedisClusterCRC16.getCRC16(s) % (partition.modMax + 1)) == partition.mod)
+      //System.out.println("Keys filtered: " + f1.length)
+      keys.addAll(f1)
+      //System.out.println("Keys count total: " + scan.getResult.size() +", Keys scan cursor: " + scan.getStringCursor )
+    }
+    keys
+  }
+
+
 
   override protected def getPreferredLocations(split: Partition): Seq[String] =  {
     Seq(split.asInstanceOf[RedisPartition].endpoint._1.getHostName)
   }
 
   override protected def getPartitions: Array[Partition] =   {
-
-
     (0 until redisHosts.size).map(i => {
       new RedisPartition(i,(InetAddress.getByName(redisHosts(i)._1), redisHosts(i)._2), redisHosts(i)._3, redisHosts(i)._4).asInstanceOf[Partition]
     }).toArray
   }
-}
-
-class SparkContextFunctions(@transient val sc: SparkContext) extends Serializable {
-
-  def redisInput(initialHost: (String,Int), useSlaves: Boolean = false, numPaprtitionsPerNode: Int = 1) =
-  {
-    //For now only master nodes
-    val jc = new JedisCluster(Set(new HostAndPort(initialHost._1, initialHost._2)), 5)
-    val pools: util.Collection[JedisPool] = jc.getClusterNodes.values
-    val hosts = pools.map(jp => getSet(jp, useSlaves, numPaprtitionsPerNode)).flatMap(x => x._1.zip(Seq.fill(x._1.size){x._2})).map(s =>  (s._1._1, s._1._2, s._1._3, s._2)).toArray
-    new RedisRDD(sc,  hosts)
-  }
-
-  def getSet(jp: JedisPool, useSlaves: Boolean, numPaprtitionsPerNode: Int ) = {
-    val s : scala.collection.mutable.Set[(String, Int, Int)] = scala.collection.mutable.Set()
-    val resource = jp.getResource()
-    val client = resource.getClient()
-    var i = 0
-    var master = false
-    resource.info("replication").split("\n").foreach { repl =>
-      if(repl.contains("role"))
-      {
-        if(repl.contains("master")) {
-          master = true;
-          (0 until numPaprtitionsPerNode).foreach { unused =>
-            s.add((client.getHost(), client.getPort(), i))
-            i += 1
-          }
-        }
-        else {
-          i = 0
-          master = false
-        }
-      }
-      if(useSlaves && master)
-      {
-        if(repl.startsWith("slave")) {
-
-          val replSplit = repl.split("=");
-          (0 until numPaprtitionsPerNode).foreach {unused =>
-            s.add((replSplit(1).replace(",port", ""), replSplit(2).replace(",state", "").toInt, i))
-            i+=1
-          }
-        }
-      }
-    }
-    (s, i-1)
-  }
 
 
 }
+
