@@ -70,6 +70,23 @@ class SparkContextFunctions(@transient val sc: SparkContext) extends Serializabl
     new RedisSRDD(sc,hosts,namespace,scanCount,keyPattern,valuePattern)
   }
 
+  def redisKInput(initialHost: (String, Int),
+                  useSlaves: Boolean = false,
+                  numPaprtitionsPerNode: Int = 1,
+                  namespace: Int = 0,
+                  scanCount: Int = 10000,
+                  keyPattern: String = "*",
+                  mGetCount: Int = 100
+                   ) = {
+    //For now only master nodes
+    val jc = new JedisCluster(Set(new HostAndPort(initialHost._1, initialHost._2)), 5)
+    val pools: util.Collection[JedisPool] = jc.getClusterNodes.values
+    val hosts = pools.map(jp => getSet(jp, useSlaves, numPaprtitionsPerNode)).flatMap(x => x._1.zip(Seq.fill(x._1.size) {
+      x._2
+    })).map(s => (s._1._1, s._1._2, s._1._3, s._2)).toArray
+    new RedisKRDD(sc,hosts,namespace,scanCount,keyPattern,mGetCount)
+  }
+
 
   def getSet(jp: JedisPool, useSlaves: Boolean, numPaprtitionsPerNode: Int) = {
     val s: scala.collection.mutable.Set[(String, Int, Int)] = scala.collection.mutable.Set()
