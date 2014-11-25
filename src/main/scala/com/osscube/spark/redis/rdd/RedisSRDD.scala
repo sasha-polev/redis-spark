@@ -28,11 +28,11 @@ class RedisSRDD (  //[K,V]
     val jedis = new Jedis(endpoint._1.getHostAddress,endpoint._2)
     jedis.select(namespace)
     val keys = getKeys(jedis, keyPattern, scanCount, partition)
-    keys.flatMap(getVals(jedis, _, keyPattern, scanCount)).iterator
+    keys.flatMap(getVals(jedis, _, valuePattern, scanCount)).iterator
   }
 
-  def getVals(jedis: Jedis, k: String, keyPattern: String, scanCount: Int): Seq[(String, String)]= {
-    val params = new ScanParams().`match`(keyPattern) //.count(scanCount)
+  def getVals(jedis: Jedis, k: String, valuePattern: String, scanCount: Int): Seq[(String, String)]= {
+    val params = new ScanParams().`match`(valuePattern) //.count(scanCount)
     val vals = new util.HashSet[String]()
     var scan = jedis.sscan(k,"0",params)
     vals.addAll(scan.getResult)
