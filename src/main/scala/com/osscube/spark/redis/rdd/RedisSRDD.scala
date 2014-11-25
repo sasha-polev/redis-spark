@@ -26,10 +26,8 @@ class RedisSRDD (  //[K,V]
     val endpoint = partition.endpoint
     logDebug("RDD: " + split.index + ", Connecting to: " + endpoint)
     val jedis = new Jedis(endpoint._1.getHostAddress,endpoint._2)
-    //jedis.select(namespace)
+    jedis.select(namespace)
     val keys = getKeys(jedis, keyPattern, scanCount, partition)
-    logDebug("Keys found: " + keys.mkString(" "))
-    //System.out.println("RDD: " + split.index + ", Keys count: " + keys.size()+ ", Mod Max: " + partition.modMax + ", Mod: " + partition.mod)
     keys.flatMap(getVals(jedis, _, keyPattern, scanCount)).iterator
   }
 
@@ -50,19 +48,14 @@ class RedisSRDD (  //[K,V]
 
   def getKeys(jedis: Jedis, keyPattern: String, scanCount: Int, partition: RedisPartition ) = {
     val params = new ScanParams().`match`(keyPattern).count(scanCount)
-    //System.out.println("Params k: " + keyPattern + "|" + scanCount)
     val keys = new util.HashSet[String]()
     var scan = jedis.scan("0",params)
-    //System.out.println("Keys count total: " + scan.getResult.size() +", Keys scan cursor: " + scan.getStringCursor )
     val f = scan.getResult.filter(s => (JedisClusterCRC16.getCRC16(s) % (partition.modMax + 1)) == partition.mod)
-    //System.out.println("Keys filtered: " + f.length)
     keys.addAll(f)
     while(scan.getStringCursor != "0"){
       scan = jedis.scan(scan.getStringCursor, params)
       val f1  = scan.getResult.filter(s => (JedisClusterCRC16.getCRC16(s) % (partition.modMax + 1)) == partition.mod)
-      //System.out.println("Keys filtered: " + f1.length)
       keys.addAll(f1)
-      //System.out.println("Keys count total: " + scan.getResult.size() +", Keys scan cursor: " + scan.getStringCursor )
     }
     keys
   }
