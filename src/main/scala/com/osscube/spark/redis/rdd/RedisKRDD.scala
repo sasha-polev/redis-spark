@@ -16,8 +16,7 @@ class RedisKRDD (  //[K,V]
                   @transient val redisHosts: Array[(String,Int, Int, Int)], //last value is number of partitions per host
                   val namespace: Int,
                   val scanCount: Int,
-                  val keyPattern: String,
-                  val mGetCount: Int
+                  val keyPattern: String
                  )
   extends RDD[(String, String)](sc, Seq.empty) with Logging {
 
@@ -28,11 +27,13 @@ class RedisKRDD (  //[K,V]
     val jedis = new Jedis(endpoint._1.getHostAddress,endpoint._2)
     jedis.select(namespace)
     val keys = getKeys(jedis, keyPattern, scanCount, partition)
-    keys.grouped(mGetCount).flatMap(getVals(jedis, _))
+    keys.groupBy(JedisClusterCRC16.getSlot(_)).flatMap(x => getVals(jedis, x._2)).iterator
   }
 
   def getVals(jedis: Jedis, keys: Set[String]): Seq[(String, String)]= {
-      jedis.mget(keys.mkString(" ")).zip(keys)
+      System.out.println("Port" + jedis.getClient.getPort)
+      System.out.println(keys.mkString(" "))
+      keys.zip(jedis.mget(keys.mkString(" "))).toSeq
   }
 
 
