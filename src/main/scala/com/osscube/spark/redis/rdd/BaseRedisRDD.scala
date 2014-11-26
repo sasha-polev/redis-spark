@@ -66,7 +66,7 @@ abstract class BaseRedisRDD (
 
 class SparkContextFunctions(@transient val sc: SparkContext) extends Serializable {
 
-  def redisHInput(initialHost: (String, Int), useSlaves: Boolean = false, numPaprtitionsPerNode: Int = 1, namespace: Int = 0,
+  def redisHInput(initialHost: (String, Int),numPaprtitionsPerNode: Int = 1, useSlaves: Boolean = false,  namespace: Int = 0,
                  scanCount: Int = 10000,
                  keyPattern: String = "*",
                  checkForKeyType: Boolean = false) = {
@@ -80,8 +80,8 @@ class SparkContextFunctions(@transient val sc: SparkContext) extends Serializabl
   }
 
   def redisSInput(initialHost: (String, Int),
-                  useSlaves: Boolean = false,
                   numPaprtitionsPerNode: Int = 1,
+                  useSlaves: Boolean = false,
                   namespace: Int = 0,
                   scanCount: Int = 10000,
                   keyPattern: String = "*",
@@ -132,8 +132,8 @@ class SparkContextFunctions(@transient val sc: SparkContext) extends Serializabl
   }
 
   def redisKInput(initialHost: (String, Int),
-                  useSlaves: Boolean = false,
                   numPaprtitionsPerNode: Int = 1,
+                  useSlaves: Boolean = false,
                   namespace: Int = 0,
                   scanCount: Int = 10000,
                   keyPattern: String = "*",
