@@ -11,7 +11,7 @@ Use cases:
 
 There are three types of structures that can be used depending on use case:
   * Plain Key/Value (can be used in pretty much any scenario)
-  * Sets (when multiple values are updated in once, and each value is unique per key. Especially performant when there are many set entries per key)
+  * Sets (when multiple values are updated in once, and each value is unique per key. Tis is especially performant when there are many set entries per key)
   * Hashes (special case when key can be logically broken in 2 parts, where first part is common between many records and has meaning. Allows very fast filtering on first part of the key)
 
 Multiple RDD partitions can be created per Redis master node. At the moment reading from slaves is not supported (Jedis does not support it [yet](https://github.com/xetorthio/jedis/issues/790)).
@@ -24,15 +24,15 @@ Example code
 import com.osscube.spark.redis.rdd._
 val rddK1 = sc.redisKInput(("192.168.142.162",7000), 2,keyPattern="@*")
 val rddS1 = sc.redisSInput(("192.168.142.162",7000), 2 keyPattern="£*")
-rddK1.rddS1(t3)....
-
+rddK1.join(rddS1)....
 ```
 
-At the moment above code will run without shufle, but produce 0 results (as keys have to start from different letter and thus never match :-)
+At the moment above code will run without shuffle, but produce 0 results (as keys have to start from different letter and thus never match :-)
 
 It expects the data in the format:
-For K: ```set @key value```
-For S: ```sadd £key value```
+
+  * For K: `set @key value`
+  * For S: `sadd £key value`
 
 Performance
 -----------
