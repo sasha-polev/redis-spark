@@ -13,9 +13,10 @@ class RedisKRDD(
                 @transient redisHosts: Array[(String, Int, Int, Int)], //last value is number of partitions per host
                 @transient namespace: Int,
                 @transient scanCount: Int,
-                @transient keyPattern: String
+                @transient keyPattern: String,
+                @transient makePartitioner: Boolean
                  )
-  extends BaseRedisRDD(sc, redisHosts, namespace, scanCount, keyPattern)  with Logging {
+  extends BaseRedisRDD(sc, redisHosts, namespace, scanCount, keyPattern, makePartitioner)  with Logging {
 
   override def compute(split: Partition, context: TaskContext): Iterator[(String, String)] = {
     val partition: RedisPartition = split.asInstanceOf[RedisPartition]

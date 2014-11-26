@@ -4,7 +4,7 @@ import java.net.InetAddress
 import java.util
 
 import org.apache.spark.rdd.RDD
-import org.apache.spark.{Logging, Partition, SparkContext, TaskContext}
+import org.apache.spark._
 import redis.clients.jedis.{HostAndPort, Jedis, JedisCluster, JedisPool}
 import redis.clients.util.JedisClusterCRC16
 
@@ -19,7 +19,8 @@ class RedisHRDD(
                @transient keyPattern: String,
                val checkForKeyType: Boolean = false
                 )
-  extends BaseRedisRDD(sc, redisHosts, namespace, scanCount, keyPattern) with Logging {
+  extends BaseRedisRDD(sc, redisHosts, namespace, scanCount, keyPattern, false) with Logging {
+
 
   override def compute(split: Partition, context: TaskContext): Iterator[(String, String)] = {
     val partition: RedisPartition = split.asInstanceOf[RedisPartition]

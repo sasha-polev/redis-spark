@@ -17,9 +17,10 @@ class RedisSRDD(//[K,V]
                 @transient namespace: Int = 0,
                 @transient scanCount: Int = 10000,
                 @transient keyPattern: String = "*",
+                @transient makePartitioner: Boolean,
                 val valuePattern: String = "*"
                  )
-  extends BaseRedisRDD(sc, redisHosts, namespace, scanCount, keyPattern) with Logging {
+  extends BaseRedisRDD(sc, redisHosts, namespace, scanCount, keyPattern,makePartitioner) with Logging {
 
   override def compute(split: Partition, context: TaskContext): Iterator[(String, String)] = {
     val partition: RedisPartition = split.asInstanceOf[RedisPartition]
