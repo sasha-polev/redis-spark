@@ -61,11 +61,38 @@ abstract class BaseRedisRDD (
     keys
   }
 
+  /**
+   * Functional implementation of getKeys
+   * @param jedis
+   * @param keyPattern
+   * @param scanCount
+   * @param partition
+   * @return
+   */
+  def getKeysRecursive(jedis: Jedis, keyPattern: String, scanCount: Int, partition: RedisPartition) = {
+    def getKeysSubset(currentkeys: Seq[String], jedis: Jedis, params:ScanParams, partition: RedisPartition, nextCursor: String, first: Boolean) : Seq[String] = {
+      if(!first && nextCursor == "0") return currentkeys
+      val res = jedis.scan(nextCursor, params)
+      getKeysSubset(currentkeys ++ res.getResult, jedis, params, partition, res.getStringCursor, false)
+    }
+    val params = new ScanParams().`match`(keyPattern).count(scanCount)
+    getKeysSubset(Seq[String](), jedis, params, partition, "0", true).distinct
+  }
 }
 
 
 class SparkContextFunctions(@transient val sc: SparkContext) extends Serializable {
 
+  /**
+   * @param initialHost This is a tuple of any host and port in the cluster
+   * @param numPaprtitionsPerNode Optional, number of partitions per (master) node, default 1
+   * @param useSlaves Optional, reserved till when Jedis supports reading slaves in the Cluster, default 0
+   * @param namespace Optional, reserved till when Redis supports namespaces in Cluster, default 0
+   * @param scanCount Optional, allows to change number of keys returned in each scan iteration
+   * @param keyPattern Optional, allows filtering by key on redis, before sending data to Spark
+   * @param checkForKeyType Optionally allws to check if content of the set is Hash (very slow)
+   * @return Pair RDD of simple Key/Has members stored currently in Redis cluster. keys are unique and pre-partitioned by crc16 % 16383. If key contains {...} parts around it are excluded for partitioning (TODO: fix prefixes)
+   */
   def redisHInput(initialHost: (String, Int),numPaprtitionsPerNode: Int = 1, useSlaves: Boolean = false,  namespace: Int = 0,
                  scanCount: Int = 10000,
                  keyPattern: String = "*",
@@ -79,6 +106,17 @@ class SparkContextFunctions(@transient val sc: SparkContext) extends Serializabl
     new RedisHRDD(sc, hosts, namespace,scanCount, keyPattern, checkForKeyType)
   }
 
+  /**
+   * @param initialHost This is a tuple of any host and port in the cluster
+   * @param numPaprtitionsPerNode Optional, number of partitions per (master) node, default 1
+   * @param useSlaves Optional, reserved till when Jedis supports reading slaves in the Cluster, default 0
+   * @param namespace Optional, reserved till when Redis supports namespaces in Cluster, default 0
+   * @param scanCount Optional, allows to change number of keys returned in each scan iteration
+   * @param keyPattern Optional, allows filtering by key on redis, before sending data to Spark
+   * @param makePartitioner Optionally set if you want partitioner to be set (to join/co-group with similar Redis RDD without shuffle. Default true
+   * @param valuePattern Optionally set filter to apply to set members
+   * @return Pair RDD of  Key/Set members stored currently in Redis cluster. keys are unique and pre-partitioned by crc16 % 16383. If key contains {...} parts around it are excluded for partitioning (TODO: fix prefixes)
+   */
   def redisSInput(initialHost: (String, Int),
                   numPaprtitionsPerNode: Int = 1,
                   useSlaves: Boolean = false,
@@ -97,6 +135,40 @@ class SparkContextFunctions(@transient val sc: SparkContext) extends Serializabl
     new RedisSRDD(sc, hosts, namespace, scanCount, keyPattern, makePartitioner, valuePattern)
   }
 
+  /**
+   * @param initialHost This is a tuple of any host and port in the cluster
+   * @param numPaprtitionsPerNode Optional, number of partitions per (master) node, default 1
+   * @param useSlaves Optional, reserved till when Jedis supports reading slaves in the Cluster, default 0
+   * @param namespace Optional, reserved till when Redis supports namespaces in Cluster, default 0
+   * @param scanCount Optional, allows to change number of keys returned in each scan iteration
+   * @param keyPattern Optional, allows filtering by key on redis, before sending data to Spark
+   * @param makePartitioner Optionally set if you want partitioner to be set (to join/co-group with similar Redis RDD without shuffle. Default true
+   * @return Pair RDD of simple Key/Values stored currently in Redis cluster. keys are unique and pre-partitioned by crc16 % 16383. If key contains {...} parts around it are excluded for partitioning (TODO: fix prefixes)
+   */
+  def redisKInput(initialHost: (String, Int),
+                  numPaprtitionsPerNode: Int = 1,
+                  useSlaves: Boolean = false,
+                  namespace: Int = 0,
+                  scanCount: Int = 10000,
+                  keyPattern: String = "*",
+                  makePartitioner: Boolean = true
+                   ) = {
+    //For now only master nodes
+    val jc = new JedisCluster(Set(new HostAndPort(initialHost._1, initialHost._2)), 5)
+    val pools: util.Collection[JedisPool] = jc.getClusterNodes.values
+    val hosts = pools.map(jp => getSet(jp, useSlaves, numPaprtitionsPerNode)).flatMap(x => x._1.zip(Seq.fill(x._1.size) {
+      x._2
+    })).map(s => (s._1._1, s._1._2, s._1._3, s._2)).toArray
+    new RedisKRDD(sc, hosts, namespace, scanCount, keyPattern, makePartitioner)
+  }
+
+  /**
+   *
+   * @param jp Jedis pool containing host
+   * @param useSlaves use slaves or not (not supported in current Jedis version)
+   * @param numPaprtitionsPerNode umber of partitions per (master) node
+   * @return list of nodes total counts of partitions per key range
+   */
   def getSet(jp: JedisPool, useSlaves: Boolean, numPaprtitionsPerNode: Int) = {
     val s: scala.collection.mutable.Set[(String, Int, Int)] = scala.collection.mutable.Set()
     val resource = jp.getResource()
@@ -131,22 +203,7 @@ class SparkContextFunctions(@transient val sc: SparkContext) extends Serializabl
     (s, i - 1)
   }
 
-  def redisKInput(initialHost: (String, Int),
-                  numPaprtitionsPerNode: Int = 1,
-                  useSlaves: Boolean = false,
-                  namespace: Int = 0,
-                  scanCount: Int = 10000,
-                  keyPattern: String = "*",
-                  makePartitioner: Boolean = true
-                   ) = {
-    //For now only master nodes
-    val jc = new JedisCluster(Set(new HostAndPort(initialHost._1, initialHost._2)), 5)
-    val pools: util.Collection[JedisPool] = jc.getClusterNodes.values
-    val hosts = pools.map(jp => getSet(jp, useSlaves, numPaprtitionsPerNode)).flatMap(x => x._1.zip(Seq.fill(x._1.size) {
-      x._2
-    })).map(s => (s._1._1, s._1._2, s._1._3, s._2)).toArray
-    new RedisKRDD(sc, hosts, namespace, scanCount, keyPattern, makePartitioner)
-  }
+
 
 
 }
